@@ -188,3 +188,73 @@ def single_stacked_kan_training(x_training, y_training, x_test, y_test, model_pa
         'base_fns': best_model[1],
     }
     return model_params, y_pred_test, losses, all_xs
+
+def single_stacked_mlp_training(x_training, y_training, x_test, y_test, lr, layer_sizes, early_stopping_imrpovement_threshold=200, early_stopping_iterations=1e4, verbose=True):
+    """Trains MLP similar to the function above."""
+    
+    layer_sizes = [1] + layer_sizes + [1]
+    weights, biases = [], []
+    n_layers = len(layer_sizes)
+
+    # Define MLP weights and biases
+    for idx in range(n_layers-1):
+        w = torch.randn(layer_sizes[idx], layer_sizes[idx+1], requires_grad=True)
+        weights.append(w)
+    
+        b = torch.zeros(layer_sizes[idx+1], requires_grad=True)
+        biases.append(b)
+
+    losses = {'train': [], 'val': []}
+    best_loss = np.inf
+    n_no_improvements = 0
+    i = 0
+    while True:
+        x = x_training
+        for weight, bias in zip(weights, biases):
+            x = torch.nn.linear(x, weight.t(), bias)
+            x = torch.nn.silu(x) # relu might not work better here
+        
+        y_pred = x
+        loss = torch.mean(torch.pow(y_pred - y_training, 2))
+        loss.backward()
+        losses['train'].append(loss.item())
+
+        # Perform gradient descent
+        for weight, bias in zip(weights, biases):
+            weight.data = weight.data - lr * weight.grad
+            weight.grad.zero_()
+        
+            bias.data = bias.data - lr * bias.grad
+            bias.grad.zero_()
+
+        # evaluate validation loss
+        with torch.no_grad():
+            x = x_test
+            for weight, bias in zip(weights, biases):
+                x = torch.nn.linear(x, weight.t(), bias)
+                x = torch.nn.silu(x) # relu might not work better here
+            y_pred_test = x
+            val_loss = torch.mean(torch.pow(x - y_test, 2))
+            losses['val'].append(val_loss.item())
+
+        if i% 100 == 0 and verbose:
+            print(f"Val loss: {val_loss.item(): 0.5f}\tTrain loss: {loss.item(): 0.5f}\tBest Val loss:{best_loss: 0.5f}")
+            
+        if best_loss > val_loss.item():
+            best_loss = val_loss.item()
+            best_model = [weights, biases]
+            n_no_improvements = 0
+        else:
+            n_no_improvements += 1
+            if n_no_improvements > early_stopping_imrpovement_threshold:
+                print('Stopping: No further improvements...')
+                break
+    
+        i += 1
+        if i > early_stopping_iterations:
+            print('Stopping: Iteration limit reached...')
+            break       
+
+
+    return best_model, y_pred_test, losses
+        
