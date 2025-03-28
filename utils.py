@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-
+import torch.nn.functional as F
 
 def extend_grid(grid, k):
     """
@@ -189,20 +189,25 @@ def single_stacked_kan_training(x_training, y_training, x_test, y_test, model_pa
     }
     return model_params, y_pred_test, losses, all_xs
 
-def single_stacked_mlp_training(x_training, y_training, x_test, y_test, lr, layer_sizes, early_stopping_imrpovement_threshold=200, early_stopping_iterations=1e4, verbose=True):
+
+def single_stacked_mlp_training(x_training, y_training, x_test, y_test, model_params=None,lr=0.1,layer_sizes=[], early_stopping_imrpovement_threshold=200, early_stopping_iterations=1e4, verbose=True):
     """Trains MLP similar to the function above."""
     
     layer_sizes = [1] + layer_sizes + [1]
     weights, biases = [], []
     n_layers = len(layer_sizes)
 
-    # Define MLP weights and biases
-    for idx in range(n_layers-1):
-        w = torch.randn(layer_sizes[idx], layer_sizes[idx+1], requires_grad=True)
-        weights.append(w)
-    
-        b = torch.zeros(layer_sizes[idx+1], requires_grad=True)
-        biases.append(b)
+    if model_params==None:
+        # Initialize weights and biases
+        for idx in range(n_layers-1):
+            w = torch.randn(layer_sizes[idx], layer_sizes[idx+1], requires_grad=True)
+            weights.append(w)
+        
+            b = torch.zeros(layer_sizes[idx+1], requires_grad=True)
+            biases.append(b)
+    else:
+        weights = model_params['weights']
+        biases = model_params['biases']
 
     losses = {'train': [], 'val': []}
     best_loss = np.inf
@@ -211,8 +216,8 @@ def single_stacked_mlp_training(x_training, y_training, x_test, y_test, lr, laye
     while True:
         x = x_training
         for weight, bias in zip(weights, biases):
-            x = torch.nn.linear(x, weight.t(), bias)
-            x = torch.nn.silu(x) # relu might not work better here
+            x = F.linear(x, weight.t(), bias)
+            x = F.silu(x) # relu might not work better here
         
         y_pred = x
         loss = torch.mean(torch.pow(y_pred - y_training, 2))
@@ -231,8 +236,8 @@ def single_stacked_mlp_training(x_training, y_training, x_test, y_test, lr, laye
         with torch.no_grad():
             x = x_test
             for weight, bias in zip(weights, biases):
-                x = torch.nn.linear(x, weight.t(), bias)
-                x = torch.nn.silu(x) # relu might not work better here
+                x = F.linear(x, weight.t(), bias)
+                x = F.silu(x) # relu might not work better here
             y_pred_test = x
             val_loss = torch.mean(torch.pow(x - y_test, 2))
             losses['val'].append(val_loss.item())
@@ -253,8 +258,12 @@ def single_stacked_mlp_training(x_training, y_training, x_test, y_test, lr, laye
         i += 1
         if i > early_stopping_iterations:
             print('Stopping: Iteration limit reached...')
-            break       
+            break
 
+    model_params = {
+        'weights': best_model[0],
+        'biases': best_model[1],
+    }
 
-    return best_model, y_pred_test, losses
+    return model_params, y_pred_test, losses
         
