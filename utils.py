@@ -101,7 +101,7 @@ def single_stacked_kan_training(x_training, y_training, x_test, y_test, model_pa
     
             if use_scales:
                 base_fn = torch.nn.SiLU()
-                scale_base = torch.nn.Parameter(torch.ones(x_eval.shape[-1])).requires_grad_(True)
+                scale_base = torch.nn.Parameter(torch.ones(x_eval.shape[-1])).requires_grad_(True) #TODO: find how to give the size of wb and ws
                 scale_spline = torch.nn.Parameter(torch.ones(x_eval.shape[-1])).requires_grad_(True)
     
                 scale_bases.append(scale_base)
@@ -128,7 +128,7 @@ def single_stacked_kan_training(x_training, y_training, x_test, y_test, model_pa
             x_ = torch.einsum('ijk, bij->bk', coeffs[idx], bases)
             if use_scales:
                 base_transformed_x = base_fns[idx](x) # transformation of the original x
-                x = base_transformed_x * scale_bases[idx] + x_ * scale_splines[idx]
+                x = base_transformed_x * scale_bases[idx] + x_ * scale_splines[idx] #phi(x)=wb*b(x)+ws*sum{ci*Bi(x)}
             else:
                 x = x_
 
@@ -196,11 +196,13 @@ def single_stacked_mlp_training(x_training, y_training, x_test, y_test, model_pa
     layer_sizes = [1] + layer_sizes + [1]
     weights, biases = [], []
     n_layers = len(layer_sizes)
-
+    
     if model_params==None:
         # Initialize weights and biases
         for idx in range(n_layers-1):
-            w = torch.randn(layer_sizes[idx], layer_sizes[idx+1], requires_grad=True)
+            #He weight initialization
+            stdw=torch.sqrt(2.0/layer_sizes[idx])
+            w = torch.randn(layer_sizes[idx], layer_sizes[idx+1], requires_grad=True)*stdw
             weights.append(w)
         
             b = torch.zeros(layer_sizes[idx+1], requires_grad=True)
@@ -210,27 +212,33 @@ def single_stacked_mlp_training(x_training, y_training, x_test, y_test, model_pa
         biases = model_params['biases']
 
     losses = {'train': [], 'val': []}
+    optimizer = torch.optim.Adam([weights, biases],lr=lr)
     best_loss = np.inf
     n_no_improvements = 0
     i = 0
     while True:
+        optimizer.zero_grad()
+
         x = x_training
         for weight, bias in zip(weights, biases):
             x = F.linear(x, weight.t(), bias)
-            x = F.silu(x) # relu might not work better here
+            #x = F.silu(x) # relu might not work better here
+            x = F.tanh(x) 
         
         y_pred = x
         loss = torch.mean(torch.pow(y_pred - y_training, 2))
         loss.backward()
+        
         losses['train'].append(loss.item())
 
-        # Perform gradient descent
-        for weight, bias in zip(weights, biases):
-            weight.data = weight.data - lr * weight.grad
-            weight.grad.zero_()
+        # # Perform basic gradient descent
+        # for weight, bias in zip(weights, biases):
+        #     weight.data = weight.data - lr * weight.grad
+        #     weight.grad.zero_()
         
-            bias.data = bias.data - lr * bias.grad
-            bias.grad.zero_()
+        #     bias.data = bias.data - lr * bias.grad
+        #     bias.grad.zero_()
+        optimizer.step()
 
         # evaluate validation loss
         with torch.no_grad():
